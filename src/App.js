@@ -117,7 +117,7 @@ export default function App() {
   }
 
   async function registrarMovimentacao(id, tipo) {
-    const quantidadeStr = prompt(\`Quantidade para \${tipo}:\`);
+    const quantidadeStr = prompt(`Quantidade para \${tipo}:\`);
     if (!quantidadeStr) return;
     const quantidade = parseInt(quantidadeStr);
     if (isNaN(quantidade) || quantidade <= 0) return alert('Quantidade inválida');
