@@ -1,3 +1,5 @@
+// App.js completo com todas as funcionalidades solicitadas
+
 import { useEffect, useState } from 'react';
 import { initializeApp } from 'firebase/app';
 import {
@@ -21,6 +23,7 @@ import {
   uploadBytes,
   getDownloadURL,
 } from 'firebase/storage';
+import * as XLSX from 'xlsx';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCSoQWqSwrTEC748SB9qwPF0RENVS1iO68",
@@ -38,7 +41,7 @@ const storage = getStorage(app);
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [form, setForm] = useState({ nome: '', tipo: '', quantidade: '', local: '', requisitante: '', dataEntrada: '', observacoes: '', imagemUrl: '', codigo: '', movimentacaoInicial: 'entrada' });
+  const [form, setForm] = useState({ nome: '', tipo: '', quantidade: '', local: '', requisitante: '', dataEntrada: '', observacoes: '', imagemUrl: '', codigo: '' });
   const [materiais, setMateriais] = useState([]);
   const [imagemFile, setImagemFile] = useState(null);
   const [busca, setBusca] = useState('');
@@ -46,7 +49,7 @@ export default function App() {
   const [senha, setSenha] = useState('');
   const [erroLogin, setErroLogin] = useState('');
   const [mensagem, setMensagem] = useState('');
-  const [tela, setTela] = useState('cadastro');
+  const [tela, setTela] = useState('entrada');
 
   useEffect(() => {
     onAuthStateChanged(auth, (currentUser) => {
@@ -93,69 +96,46 @@ export default function App() {
   }
 
   async function salvarMaterial() {
+    if (isNaN(form.quantidade)) {
+      alert("Quantidade deve ser número");
+      return;
+    }
     let imagemUrl = '';
     if (imagemFile) {
       const storageRef = ref(storage, `materiais/${Date.now()}_${imagemFile.name}`);
       await uploadBytes(storageRef, imagemFile);
       imagemUrl = await getDownloadURL(storageRef);
     }
-
-    const movInicial = {
-      tipo: form.movimentacaoInicial,
-      quantidade: parseInt(form.quantidade),
-      data: new Date().toISOString(),
-      usuario: user.email
-    };
-
-    const novo = {
-      ...form,
-      imagemUrl,
-      quantidade: form.movimentacaoInicial === 'entrada' ? parseInt(form.quantidade) : 0,
-      movimentacoes: [movInicial]
-    };
-
+    const novo = { ...form, imagemUrl, quantidade: parseInt(form.quantidade), movimentacoes: [
+      {
+        tipo: 'entrada',
+        quantidade: parseInt(form.quantidade),
+        data: new Date().toISOString(),
+        usuario: user.email
+      }
+    ]};
     await addDoc(collection(db, 'materiais'), novo);
-    setForm({ nome: '', tipo: '', quantidade: '', local: '', requisitante: '', dataEntrada: '', observacoes: '', imagemUrl: '', codigo: '', movimentacaoInicial: 'entrada' });
+    setForm({ nome: '', tipo: '', quantidade: '', local: '', requisitante: '', dataEntrada: '', observacoes: '', imagemUrl: '', codigo: '' });
     setImagemFile(null);
-    setMensagem("Material salvo com sucesso!");
+    setMensagem("Salvo com sucesso!");
+    carregarMateriais();
     setTimeout(() => setMensagem(''), 3000);
-    carregarMateriais();
   }
 
-  async function excluirMaterial(id) {
-    await deleteDoc(doc(db, 'materiais', id));
-    carregarMateriais();
-  }
-
-  async function registrarMovimentacao(id, tipo) {
-    const quantidadeStr = prompt("Quantidade para " + tipo + ":");
-    if (!quantidadeStr) return;
-    const quantidade = parseInt(quantidadeStr);
-    if (isNaN(quantidade) || quantidade <= 0) return alert('Quantidade inválida');
-
-    const refDoc = doc(db, 'materiais', id);
-    const snap = await getDocs(collection(db, 'materiais'));
-    const mat = snap.docs.find(d => d.id === id).data();
-
-    const novaQtd = tipo === 'entrada'
-      ? mat.quantidade + quantidade
-      : mat.quantidade - quantidade;
-
-    if (novaQtd < 0) return alert('Estoque insuficiente');
-
-    const novaMov = [...(mat.movimentacoes || []), {
-      tipo,
-      quantidade,
-      data: new Date().toISOString(),
-      usuario: user.email
-    }];
-
-    await updateDoc(refDoc, {
-      quantidade: novaQtd,
-      movimentacoes: novaMov
-    });
-
-    carregarMateriais();
+  function exportarRelatorio(tipo) {
+    let dados;
+    if (tipo === 'estoque') {
+      dados = materiais.map(m => ({ Código: m.codigo, Nome: m.nome, Tipo: m.tipo, Quantidade: m.quantidade, Local: m.local, Requisitante: m.requisitante }));
+    } else {
+      const codigo = prompt("Informe o código do material para extrair o histórico");
+      const mat = materiais.find(m => m.codigo === codigo);
+      if (!mat) return alert("Material não encontrado");
+      dados = mat.movimentacoes.map(m => ({ Tipo: m.tipo, Quantidade: m.quantidade, Data: new Date(m.data).toLocaleString(), Usuário: m.usuario }));
+    }
+    const ws = XLSX.utils.json_to_sheet(dados);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Relatorio");
+    XLSX.writeFile(wb, `relatorio_${tipo}.xlsx`);
   }
 
   const filtrados = materiais.filter(m =>
@@ -163,26 +143,12 @@ export default function App() {
     m.codigo.toLowerCase().includes(busca.toLowerCase())
   );
 
-  function exportarCSV(dados, nomeArquivo) {
-    if (!dados || dados.length === 0) return alert("Nenhum dado para exportar");
-    const linhas = [Object.keys(dados[0]).join(',')];
-    dados.forEach(obj => {
-      linhas.push(Object.values(obj).join(','));
-    });
-    const blob = new Blob([linhas.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = nomeArquivo;
-    a.click();
-  }
-
   if (!user) {
     return (
       <div style={{ padding: 20, maxWidth: 400, margin: 'auto' }}>
         <h2>Login</h2>
-        <input placeholder="E-mail" className="border p-2 w-full mb-2" value={email} onChange={e => setEmail(e.target.value)} /><br />
-        <input type="password" placeholder="Senha" className="border p-2 w-full mb-2" value={senha} onChange={e => setSenha(e.target.value)} /><br />
+        <input placeholder="E-mail" value={email} onChange={e => setEmail(e.target.value)} /><br />
+        <input type="password" placeholder="Senha" value={senha} onChange={e => setSenha(e.target.value)} /><br />
         <button onClick={loginManual}>Entrar</button>
         {erroLogin && <div style={{ color: 'red' }}>{erroLogin}</div>}
       </div>
@@ -193,68 +159,58 @@ export default function App() {
     <div style={{ padding: 20, maxWidth: 800, margin: 'auto' }}>
       <h2>Bem-vindo, {user.email}</h2>
       <button onClick={logout}>Sair</button>
-      <button onClick={() => setTela('cadastro')}>Cadastrar Material</button>
-      <button onClick={() => setTela('busca')}>Buscar Materiais</button>
-      <button onClick={() => setTela('relatorio')}>Relatório</button>
+      <button onClick={() => setTela('entrada')}>Tela Entrada</button>
+      <button onClick={() => setTela('busca')}>Tela Busca</button>
+      <button onClick={() => setTela('relatorio')}>Relatórios</button>
 
-      {tela === 'relatorio' && (
+      {tela === 'entrada' && (
         <div>
-          <h3>Relatório de Estoque</h3>
-          <button onClick={() => exportarCSV(materiais.map(({ movimentacoes, ...rest }) => rest), 'estoque_completo.csv')}>
-            Exportar Estoque Atual para Excel
-          </button>
-          <h4>Buscar Histórico por Código</h4>
-          <input placeholder="Código do material" value={busca} onChange={e => setBusca(e.target.value)} /><br />
-          {filtrados.length > 0 && filtrados.map(m => (
-            <div key={m.id} style={{ border: '1px solid #ccc', marginTop: 10, padding: 10 }}>
-              <strong>{m.nome}</strong> - Código: {m.codigo}<br />
-              <button onClick={() => exportarCSV(m.movimentacoes || [], `historico_${m.codigo}.csv`)}>
-                Exportar Histórico
-              </button>
-            </div>
-          ))}
+          <h3>Cadastro de Material</h3>
+          <input placeholder="Nome" value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /><br />
+          <input placeholder="Tipo" value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })} /><br />
+          <input placeholder="Quantidade" value={form.quantidade} onChange={e => setForm({ ...form, quantidade: e.target.value.replace(/\D/g, '') })} /><br />
+          <input placeholder="Local" value={form.local} onChange={e => setForm({ ...form, local: e.target.value })} /><br />
+          <input placeholder="Requisitante" value={form.requisitante} onChange={e => setForm({ ...form, requisitante: e.target.value })} /><br />
+          <input type="date" value={form.dataEntrada} onChange={e => setForm({ ...form, dataEntrada: e.target.value })} /><br />
+          <input type="file" accept="image/*" capture="environment" onChange={e => setImagemFile(e.target.files[0])} /><br />
+          <input placeholder="Código" value={form.codigo} disabled /><br />
+          <input placeholder="Observações" value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /><br />
+          <button onClick={salvarMaterial}>Salvar</button>
+          {mensagem && <div style={{ color: 'green' }}>{mensagem}</div>}
         </div>
       )}
 
       {tela === 'busca' && (
         <div>
-          <h3>Busca de Materiais</h3>
-          <input
-            placeholder="Buscar por nome ou código"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-          />
-          <p>Resultados encontrados: {filtrados.length}</p>
+          <h3>Buscar Materiais</h3>
+          <input placeholder="Buscar por nome ou código" value={busca} onChange={e => setBusca(e.target.value)} /><br />
+          {busca.trim() && filtrados.map(m => (
+            <div key={m.id} style={{ border: '1px solid #ccc', padding: 10, marginTop: 10 }}>
+              <strong>{m.nome}</strong> — {m.tipo} ({m.quantidade})<br />
+              Local: {m.local} | Código: {m.codigo} | Requisitante: {m.requisitante}<br />
+              Entrada: {m.dataEntrada}<br />
+              {m.imagemUrl && <img src={m.imagemUrl} alt={m.nome} style={{ maxWidth: 100 }} />}<br />
+              Observações: {m.observacoes}<br />
+              <details>
+                <summary>📜 Histórico</summary>
+                <ul>
+                  {m.movimentacoes?.map((mov, i) => (
+                    <li key={i}>
+                      {mov.tipo === 'entrada' ? '+' : '-'}{mov.quantidade} | {mov.tipo} | {new Date(mov.data).toLocaleString()} | {mov.usuario}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
+          ))}
+        </div>
+      )}
 
-          {busca.trim() === '' ? (
-            <p>Digite algo no campo de busca para exibir os materiais.</p>
-          ) : (
-            filtrados.map((m) => (
-              <div key={m.id} style={{ border: '1px solid #ccc', padding: 10, marginTop: 10 }}>
-                <strong>{m.nome}</strong> — {m.tipo} ({m.quantidade})<br />
-                Local: {m.local} | Código: {m.codigo} | Requisitante: {m.requisitante}<br />
-                Entrada: {m.dataEntrada}<br />
-                {m.imagemUrl && (
-                  <img src={m.imagemUrl} alt={m.nome} style={{ maxWidth: 100 }} />
-                )}<br />
-                Observações: {m.observacoes}<br />
-                <button onClick={() => registrarMovimentacao(m.id, 'entrada')}>Entrada</button>
-                <button onClick={() => registrarMovimentacao(m.id, 'saida')}>Saída</button>
-                <button onClick={() => excluirMaterial(m.id)}>Excluir</button>
-                <details>
-                  <summary>📜 Histórico</summary>
-                  <ul>
-                    {m.movimentacoes?.map((mov, i) => (
-                      <li key={i}>
-                        {mov.tipo === 'entrada' ? '+' : '-'}
-                        {mov.quantidade} | {mov.tipo} | {new Date(mov.data).toLocaleString()} | {mov.usuario}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </div>
-            ))
-          )}
+      {tela === 'relatorio' && (
+        <div>
+          <h3>Relatórios</h3>
+          <button onClick={() => exportarRelatorio('estoque')}>📦 Estoque Atual</button>
+          <button onClick={() => exportarRelatorio('historico')}>📋 Histórico de Material</button>
         </div>
       )}
     </div>
